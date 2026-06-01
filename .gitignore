@@ -1,4 +1,4 @@
-# Python bytecode
+
 __pycache__/
 *.py[cod]
 *$py.class
@@ -6,22 +6,20 @@ __pycache__/
 # Local environment/IDE config
 .vscode/
 .idea/
-
-# Internal tools & temporary extracted text (Không đẩy lên GitHub)
 generate_final_docs.py
 extract_guidelines.py
 generate_project.py
 extracted_template.txt
 extracted_guideline_pdf.txt
 
-# Báo cáo học thuật & Slide (Sẽ nộp riêng qua cổng thông tin lớp học, không đưa lên GitHub)
+
 *.docx
 *.pptx
 *.pdf
 
-# File tạm khóa của Microsoft Office (ví dụ: ~$Bao_Cao_Cuoi_Ki.docx)
+
 ~$*
 *~
 
-# Dữ liệu xuất bản động cục bộ (Sẽ tự sinh ra khi chạy code)
+
 Site_*_storage.csv
