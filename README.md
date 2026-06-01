@@ -3,8 +3,6 @@
 
 Đồ án này hiện thực và đánh giá giải pháp **Time-Based Leases** nhằm khắc phục điểm yếu **Blocking** của giao thức Cam kết hai pha (**Two-Phase Commit - 2PC**) truyền thống trên dòng dữ liệu cảm biến IoT.
 
----
-
 ### 1. Thành phần thư mục dự án
 *   `advanced_2pc_simulator.py`: Mã nguồn Python cốt lõi mô phỏng toàn bộ hệ thống phân tán gồm 1 Coordinator đa luồng song song và 3 Participant Sites (`Site_North`, `Site_Central`, `Site_South`). Chương trình tự động sinh bộ dữ liệu đĩa vật lý, phân mảnh ngang dữ liệu theo `Region`, quản lý khóa tài nguyên dòng qua **Lock Table**, và kích hoạt **Local Auto-Abort** giải phóng khóa khi hết hạn Lease.
 *   `sensor_readings.csv`: Bộ dữ liệu dòng cảm biến nhiệt độ & độ ẩm gốc được sinh vật lý trên đĩa.
@@ -13,15 +11,12 @@
     1. Đồ thị bên trái: Tỷ lệ giao dịch thành công (Success Rate %) theo Lease Duration (ms).
     2. Đồ thị bên phải: Thời gian khóa tài nguyên trung bình (Avg Resource Lock Time ms) theo Lease Duration (ms).
 
----
-
 ### 2. Hướng dẫn cài đặt thư viện hỗ trợ
 Để chạy chương trình mô phỏng và tự động sinh biểu đồ phân tích thực nghiệm, máy tính của bạn cần cài đặt các thư viện Python:
 ```bash
 pip install pandas matplotlib
 ```
 
----
 
 ### 3. Cách chạy mô phỏng & Thực nghiệm
 Chạy file mô phỏng bằng Python tại Terminal của thư mục `d:\ckcsdlpt`:
@@ -37,8 +32,7 @@ python advanced_2pc_simulator.py
 6.  **Vẽ biểu đồ Trade-off kép**: Xuất biểu đồ kép `lease_analysis.png` phân tích tính hiệu năng và rủi ro nghẽn tài nguyên.
 7.  **Mô phỏng sự cố**: Coordinator bị sập đột ngột ngay sau Prepare. Log hiển thị rõ các Site phát hiện quá hạn bộ đếm Lease, tự động kích hoạt hủy giao dịch đơn phương và giải phóng Lock Table an toàn về 0.
 
----
 
 ### 4. Thông tin nhóm thực hiện
-*   **Thành viên thực hiện**: [Họ và tên Sinh Viên 1] & [Họ và tên Sinh Viên 2]
+*   **Thành viên thực hiện**: Nguyễn Minh Đại Dương
 *   **Môn học**: Cơ sở dữ liệu phân tán (Distributed Databases)
