@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local environment/IDE config
+.vscode/
+.idea/
+
+# Internal tools (Không đẩy lên GitHub nộp giáo viên)
+generate_final_docs.py
+extract_guidelines.py
+generate_project.py
+extracted_template.txt
+extracted_guideline_pdf.txt
+
+# Báo cáo học thuật (Sẽ nộp riêng qua cổng thông tin lớp học)
+Bao_Cao_Cuoi_Ki.docx
+Bao_Cao_Cuoi_Ki_v2.docx
+Slide_Thuyet_Trinh.pptx
+
+# Dữ liệu xuất bản động cục bộ (Sẽ tự sinh ra khi chạy code)
+Site_*_storage.csv
