@@ -35,14 +35,14 @@ class ParticipantNode:
         self.prepare_times = {} # tx_id -> timestamp (ms)
         self.lease_durations = {} # tx_id -> duration (ms)
         
-        # Sửa Lỗ hổng 3: Bộ ghi nhận thời gian chiếm giữ khóa thực tế trên đĩa vật lý của Site
+        # Bộ ghi nhận thời gian chiếm giữ khóa thực tế trên đĩa vật lý của Site
         self.lock_acquire_times = {} # tx_id -> timestamp (ms)
         self.lock_hold_durations = {} # tx_id -> hold_time (ms)
         
         # Sửa Lỗ hổng 2: Khóa tương trợ luồng để tránh Race Condition giữa ThreadPoolCoordinator và Tiến trình Expiry ngầm
         self.lock = threading.Lock()
         
-        # Sửa Lỗ hổng 2: Tạo tiến trình ngầm chủ động quét và hủy khóa hết hạn độc lập (Proactive Expiry Thread Daemon)
+        # Tạo tiến trình ngầm chủ động quét và hủy khóa hết hạn độc lập (Proactive Expiry Thread Daemon)
         self.bg_thread = threading.Thread(target=self._proactive_lease_checker, daemon=True)
         self.bg_thread.start()
         
@@ -279,7 +279,7 @@ def run_experiment():
             else:
                 aborts += 1
                 
-            # Sửa Lỗ hổng 3: Đo lường thời gian chiếm giữ khóa thực tế (Actual lock hold time)
+            # Đo lường thời gian chiếm giữ khóa thực tế (Actual lock hold time)
             # Truy vấn trực tiếp từ các Site tham gia xem thời gian giữ khóa thực tế lớn nhất là bao nhiêu
             actual_hold_times = []
             for node in nodes.values():
