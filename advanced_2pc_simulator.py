@@ -117,7 +117,7 @@ class ParticipantNode:
             time.sleep(delay / 1000.0)
             
         with self.lock:
-            self._abort_under_lock(tx_id)
+            self._abort_under_lock(tx_id) # Gọi hàm nội bộ hủy bỏ dưới khóa lock
             return "ACK_ABORT"
 
     def _abort_under_lock(self, tx_id):
@@ -130,7 +130,7 @@ class ParticipantNode:
         if tx_id in self.lock_acquire_times:
             self.lock_hold_durations[tx_id] = (time.time() * 1000) - self.lock_acquire_times[tx_id]
             
-        self._release_locks(tx_id)
+        self._release_locks(tx_id)# Mở khóa Lock Table
 
     def check_lease_expiry(self, tx_id):
         with self.lock:
@@ -138,7 +138,7 @@ class ParticipantNode:
 
     def _check_lease_expiry_under_lock(self, tx_id):
         if self.transaction_states.get(tx_id) == 'READY':
-            elapsed = (time.time() * 1000) - self.prepare_times[tx_id]
+            elapsed = (time.time() * 1000) - self.prepare_times[tx_id] # Tính thời gian trôi qua thực tế
             if elapsed > self.lease_durations[tx_id]:
                 print(f"[{self.name}] LEASE EXPIRED for TX {tx_id} ({elapsed:.1f}ms > {self.lease_durations[tx_id]:.1f}ms). Local Auto-Abort triggered!")
                 self._abort_under_lock(tx_id)
@@ -150,7 +150,7 @@ class ParticipantNode:
 
 class Coordinator:
     def __init__(self, nodes):
-        self.nodes = nodes # dict of region -> ParticipantNode
+        self.nodes = nodes # Danh sách 3 Site cục bộ (North, Central, South)
         
     def execute_transaction(self, tx_id, batch_data, lease_duration, network_delay_range, failure_scenario=None):
         # Route dữ liệu (Phân mảnh ngang theo Region)
@@ -160,17 +160,20 @@ class Coordinator:
             if region in fragmented_data:
                 fragmented_data[region].append(record)
 
-        # --- Phase 1: PREPARE (Hiện thực Đa luồng song song dùng ThreadPoolExecutor) ---
+        #   2. PHA 1: GỬI PREPARE ĐỒNG THỜI QUA ĐA LUỒNG (ThreadPoolExecutor)
         votes = {}
         def dispatch_prepare(region):
             data = fragmented_data[region]
             if not data:
                 return region, "NO_DATA"
             node = self.nodes[region]
+ # Gọi hàm prepare cục bộ của từng Site
+
             vote = node.prepare(tx_id, data, lease_duration, network_delay_range)
             return region, vote
 
         active_regions = [r for r, d in fragmented_data.items() if d]
+        # Bắn Parallel RPC đồng thời tới các chi nhánh
         
         with ThreadPoolExecutor(max_workers=len(active_regions)) as executor:
             prepare_results = list(executor.map(dispatch_prepare, active_regions))
@@ -179,15 +182,16 @@ class Coordinator:
             if vote != "NO_DATA":
                 votes[self.nodes[region].name] = vote
 
-        # --- Phase 2: DECISION ---
+# QUYẾT ĐỊNH DỰA TRÊN PHIẾU BẦU
+
         all_commit = all(v == "VOTE_COMMIT" for v in votes.values()) and len(votes) > 0
         decision = "GLOBAL_COMMIT" if all_commit else "GLOBAL_ABORT"
-        
+        # GIẢ LẬP SỰ CỐ: COORDINATOR CRASH SAU PHA PREPARE
         if failure_scenario == 'coordinator_crash_after_prepare':
             print("\n[SYSTEM ALERT] Coordinator crashed after PREPARE phase! No decision sent to participants.")
             return "COORDINATOR_CRASHED"
 
-        # --- Phase 2: Gửi quyết định (Đa luồng song song) ---
+  # 3. PHA 2: GỬI QUYẾT ĐỊNH ĐỒNG THỜI QUA ĐA LUỒNG (COMMIT / ABORT)
         results = {}
         def dispatch_decision(region):
             data = fragmented_data[region]
@@ -234,11 +238,15 @@ def generate_and_save_dataset(filename="sensor_readings.csv", count=500):
     df = pd.DataFrame(data)
     df.to_csv(filename, index=False)
     print(f"Dataset generated and saved successfully to {filename}!")
+#runnnn
 
 def run_experiment():
     dataset_file = "sensor_readings.csv"
-    if not os.path.exists(dataset_file):
-        generate_and_save_dataset(dataset_file, 500)
+    # Tự động tạo lại nếu tệp chưa tồn tại hoặc số dòng dữ liệu khác 10000 (đã nâng cấp)
+    if not os.path.exists(dataset_file) or (os.path.exists(dataset_file) and len(pd.read_csv(dataset_file)) != 10000):
+        if os.path.exists(dataset_file):
+            os.remove(dataset_file)
+        generate_and_save_dataset(dataset_file, 10000)
         
     df_dataset = pd.read_csv(dataset_file)
     
@@ -332,6 +340,51 @@ def run_experiment():
     plt.close()
     print(f"\nExperiment complete. Dual-trade-off Chart saved to {chart_path}")
     
+    # Pha Bơm Dữ Liệu Toàn Tải (Full Ingestion Phase) dùng Lease tối ưu 120ms
+    print("\n--- PHASE 5: FULL INGESTION OF 10,000 SENSOR READINGS ---")
+    print("Ingesting all 10,000 source readings using the optimal Lease duration of 120ms...")
+    
+    # Dọn dẹp dữ liệu đĩa của các Site trước khi bắt đầu bơm toàn tải
+    for name in ['Site_North', 'Site_Central', 'Site_South']:
+        f = f"{name}_storage.csv"
+        if os.path.exists(f):
+            os.remove(f)
+            
+    ingest_nodes = {
+        'Site_North': ParticipantNode('Site_North', db_fail_rate=0.03),
+        'Site_Central': ParticipantNode('Site_Central', db_fail_rate=0.03),
+        'Site_South': ParticipantNode('Site_South', db_fail_rate=0.03)
+    }
+    ingest_coord = Coordinator(ingest_nodes)
+    
+    batch_size = 100
+    total_records = len(df_dataset)
+    num_batches = total_records // batch_size
+    
+    success_count = 0
+    abort_count = 0
+    
+    for b in range(num_batches):
+        batch_tx_id = f"TX-INGEST-{b}"
+        batch_records = df_dataset.iloc[b * batch_size : (b + 1) * batch_size].to_dict('records')
+        
+        # Bơm qua Coordinator với Lease tối ưu 120ms, trễ mạng nhẹ (5ms - 15ms)
+        status = ingest_coord.execute_transaction(
+            batch_tx_id, batch_records, lease_duration=120, network_delay_range=(5, 15)
+        )
+        if status == "COMMITTED":
+            success_count += 1
+        else:
+            abort_count += 1
+            
+    print(f"Full Ingestion Completed! Batches Committed: {success_count}/{num_batches} | Batches Aborted: {abort_count}/{num_batches}")
+    print("Physical records successfully horizontally fragmented and stored:")
+    for name, node in ingest_nodes.items():
+        storage_file = f"{name}_storage.csv"
+        if os.path.exists(storage_file):
+            lines = len(open(storage_file).readlines()) - 1
+            print(f"- Node {name} physically stored {lines} records in '{storage_file}'")
+            
     # Demonstrate failure case (Coordinator Crash / Network Partition)
     print("\n--- SIMULATING FAILURE SCENARIO: Coordinator Crash after PREPARE ---")
     nodes_f = {
