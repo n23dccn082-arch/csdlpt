@@ -36,5 +36,5 @@ python advanced_2pc_simulator.py
 ### 4. Thông tin nhóm thực hiện
 *   **Thành viên thực hiện**: Nguyễn Minh Đại Dương
 *   **MSSV**: N23DCCN082
-*   **LỚP:**: D23CQCN02-N
-*   **Môn học**: Cơ sở dữ liệu phân tán 
+*   **Lớp**: D23CQCN02-N
+*   **Môn học**: Cơ sở dữ liệu phân tán (Distributed Databases)
