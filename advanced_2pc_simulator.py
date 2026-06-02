@@ -39,7 +39,7 @@ class ParticipantNode:
         self.lock_acquire_times = {} # tx_id -> timestamp (ms)
         self.lock_hold_durations = {} # tx_id -> hold_time (ms)
         
-        # Sửa Lỗ hổng 2: Khóa tương trợ luồng để tránh Race Condition giữa ThreadPoolCoordinator và Tiến trình Expiry ngầm
+        #  Khóa tương trợ luồng để tránh Race Condition giữa ThreadPoolCoordinator và Tiến trình Expiry ngầm
         self.lock = threading.Lock()
         
         # Tạo tiến trình ngầm chủ động quét và hủy khóa hết hạn độc lập (Proactive Expiry Thread Daemon)
@@ -65,7 +65,7 @@ class ParticipantNode:
             self.transaction_states[tx_id] = 'READY'
             self.prepare_times[tx_id] = time.time() * 1000
             
-            # Sửa Lỗ hổng 1: Sai lệch mốc tính thời gian Lease (Clock Drift/Delay Drift)
+            #  Sai lệch mốc tính thời gian Lease (Clock Drift/Delay Drift)
             # Trừ hao chính xác độ trễ mạng 'delay' từ thời điểm gửi đến thời điểm nhận để đồng bộ với bộ đếm Coordinator
             self.lease_durations[tx_id] = max(0.0, lease_duration - delay)
             
