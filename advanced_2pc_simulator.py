@@ -23,6 +23,8 @@ class SensorReading:
             "Region": self.region
         }
 
+import threading
+
 class ParticipantNode:
     def __init__(self, name, db_fail_rate=0.03):
         self.name = name
@@ -33,70 +35,113 @@ class ParticipantNode:
         self.prepare_times = {} # tx_id -> timestamp (ms)
         self.lease_durations = {} # tx_id -> duration (ms)
         
+        # Sửa Lỗ hổng 3: Bộ ghi nhận thời gian chiếm giữ khóa thực tế trên đĩa vật lý của Site
+        self.lock_acquire_times = {} # tx_id -> timestamp (ms)
+        self.lock_hold_durations = {} # tx_id -> hold_time (ms)
+        
+        # Sửa Lỗ hổng 2: Khóa tương trợ luồng để tránh Race Condition giữa ThreadPoolCoordinator và Tiến trình Expiry ngầm
+        self.lock = threading.Lock()
+        
+        # Sửa Lỗ hổng 2: Tạo tiến trình ngầm chủ động quét và hủy khóa hết hạn độc lập (Proactive Expiry Thread Daemon)
+        self.bg_thread = threading.Thread(target=self._proactive_lease_checker, daemon=True)
+        self.bg_thread.start()
+        
+    def _proactive_lease_checker(self):
+        while True:
+            time.sleep(0.005) # Quét tần suất 5ms để phát hiện hết hạn cực nhạy
+            with self.lock:
+                # Quét tất cả các giao dịch đang ở trạng thái READY để xem có cái nào hết hạn không
+                active_txs = [tx for tx, state in self.transaction_states.items() if state == 'READY']
+                for tx_id in active_txs:
+                    self._check_lease_expiry_under_lock(tx_id)
+        
     def prepare(self, tx_id, batch_data, lease_duration, network_delay_range):
-        # Giả lập trễ mạng chiều đi (gửi Prepare)
+        # Giả lập trễ mạng chiều đi (gửi Prepare từ Coordinator tới Site)
         delay = random.uniform(*network_delay_range)
         time.sleep(delay / 1000.0)
         
-        print(f"[{self.name}] Received PREPARE for TX {tx_id} with Lease {lease_duration}ms")
-        self.transaction_states[tx_id] = 'READY'
-        self.prepare_times[tx_id] = time.time() * 1000
-        self.lease_durations[tx_id] = lease_duration
-        
-        # Giả lập lỗi ghi cơ sở dữ liệu nội bộ (DB Failure) dẫn tới Vote Abort
-        if random.random() < self.db_fail_rate:
-            print(f"[{self.name}] internal DB error! Voting VOTE_ABORT.")
-            self.transaction_states[tx_id] = 'ABORTED'
-            return "VOTE_ABORT"
+        with self.lock:
+            print(f"[{self.name}] Received PREPARE for TX {tx_id} with Lease {lease_duration}ms")
+            self.transaction_states[tx_id] = 'READY'
+            self.prepare_times[tx_id] = time.time() * 1000
             
-        # Thu hồi ổ khóa khóa tài nguyên (Sensor ID)
-        for record in batch_data:
-            self.lock_table[record['SensorID']] = tx_id
+            # Sửa Lỗ hổng 1: Sai lệch mốc tính thời gian Lease (Clock Drift/Delay Drift)
+            # Trừ hao chính xác độ trễ mạng 'delay' từ thời điểm gửi đến thời điểm nhận để đồng bộ với bộ đếm Coordinator
+            self.lease_durations[tx_id] = max(0.0, lease_duration - delay)
             
-        return "VOTE_COMMIT"
+            # Giả lập lỗi ghi cơ sở dữ liệu nội bộ (DB Failure) dẫn tới Vote Abort
+            if random.random() < self.db_fail_rate:
+                print(f"[{self.name}] internal DB error! Voting VOTE_ABORT.")
+                self._abort_under_lock(tx_id)
+                return "VOTE_ABORT"
+                
+            # Thu hồi ổ khóa khóa tài nguyên (Sensor ID) và lưu trữ thời gian lấy khóa thực tế
+            self.lock_acquire_times[tx_id] = time.time() * 1000
+            for record in batch_data:
+                self.lock_table[record['SensorID']] = tx_id
+                
+            return "VOTE_COMMIT"
 
     def commit(self, tx_id, batch_data, network_delay_range):
         # Giả lập trễ mạng chiều đi (gửi Quyết định Commit)
         delay = random.uniform(*network_delay_range)
         time.sleep(delay / 1000.0)
         
-        self.check_lease_expiry(tx_id)
-        if self.transaction_states.get(tx_id) == 'ABORTED':
-            print(f"[{self.name}] Late COMMIT rejected for TX {tx_id} (Already Aborted due to Lease Expiry)")
-            return "FAIL_ALREADY_ABORTED"
-            
-        print(f"[{self.name}] Received COMMIT for TX {tx_id}")
-        if self.transaction_states.get(tx_id) == 'READY':
-            # Ghi dữ liệu vật lý vào file CSV cục bộ
-            df = pd.DataFrame(batch_data)
-            if not os.path.exists(self.storage_file):
-                df.to_csv(self.storage_file, index=False)
-            else:
-                df.to_csv(self.storage_file, mode='a', header=False, index=False)
+        with self.lock:
+            self._check_lease_expiry_under_lock(tx_id)
+            if self.transaction_states.get(tx_id) == 'ABORTED':
+                print(f"[{self.name}] Late COMMIT rejected for TX {tx_id} (Already Aborted due to Lease Expiry)")
+                return "FAIL_ALREADY_ABORTED"
                 
-            self.transaction_states[tx_id] = 'COMMITTED'
-            self._release_locks(tx_id)
-            return "ACK_COMMIT"
-        return "FAIL"
+            print(f"[{self.name}] Received COMMIT for TX {tx_id}")
+            if self.transaction_states.get(tx_id) == 'READY':
+                # Ghi dữ liệu vật lý vào file CSV cục bộ
+                df = pd.DataFrame(batch_data)
+                if not os.path.exists(self.storage_file):
+                    df.to_csv(self.storage_file, index=False)
+                else:
+                    df.to_csv(self.storage_file, mode='a', header=False, index=False)
+                    
+                self.transaction_states[tx_id] = 'COMMITTED'
+                # Đo lường thời gian chiếm giữ khóa thực tế từ prepare tới commit
+                if tx_id in self.lock_acquire_times:
+                    self.lock_hold_durations[tx_id] = (time.time() * 1000) - self.lock_acquire_times[tx_id]
+                
+                self._release_locks(tx_id)
+                return "ACK_COMMIT"
+            return "FAIL"
 
     def abort(self, tx_id, network_delay_range=None):
         if network_delay_range:
             delay = random.uniform(*network_delay_range)
             time.sleep(delay / 1000.0)
             
-        if self.transaction_states.get(tx_id) == 'ABORTED':
+        with self.lock:
+            self._abort_under_lock(tx_id)
             return "ACK_ABORT"
+
+    def _abort_under_lock(self, tx_id):
+        if self.transaction_states.get(tx_id) == 'ABORTED':
+            return
         print(f"[{self.name}] Aborting TX {tx_id}")
         self.transaction_states[tx_id] = 'ABORTED'
+        
+        # Đo lường thời gian chiếm giữ khóa thực tế khi bị Abort
+        if tx_id in self.lock_acquire_times:
+            self.lock_hold_durations[tx_id] = (time.time() * 1000) - self.lock_acquire_times[tx_id]
+            
         self._release_locks(tx_id)
-        return "ACK_ABORT"
 
     def check_lease_expiry(self, tx_id):
+        with self.lock:
+            self._check_lease_expiry_under_lock(tx_id)
+
+    def _check_lease_expiry_under_lock(self, tx_id):
         if self.transaction_states.get(tx_id) == 'READY':
             elapsed = (time.time() * 1000) - self.prepare_times[tx_id]
             if elapsed > self.lease_durations[tx_id]:
-                print(f"[{self.name}] LEASE EXPIRED for TX {tx_id} ({elapsed:.1f}ms > {self.lease_durations[tx_id]}ms). Local Auto-Abort triggered!")
-                self.abort(tx_id)
+                print(f"[{self.name}] LEASE EXPIRED for TX {tx_id} ({elapsed:.1f}ms > {self.lease_durations[tx_id]:.1f}ms). Local Auto-Abort triggered!")
+                self._abort_under_lock(tx_id)
 
     def _release_locks(self, tx_id):
         keys_to_release = [k for k, v in self.lock_table.items() if v == tx_id]
@@ -227,18 +272,25 @@ def run_experiment():
             start_idx = (i * 5) % len(df_dataset)
             batch = df_dataset.iloc[start_idx : start_idx + 5].to_dict('records')
             
-            # Đo lường thời gian block giữ khóa tối đa khi chạy giao dịch
-            t_start = time.time() * 1000
             status = coordinator.execute_transaction(tx_id, batch, lease, network_delay_range)
-            t_elapsed = (time.time() * 1000) - t_start
             
             if status == "COMMITTED":
                 commits += 1
-                blocking_times.append(t_elapsed)
             else:
                 aborts += 1
-                # Nếu abort do trễ/sập, khóa được giữ tối đa bằng thời gian Lease
-                blocking_times.append(min(t_elapsed, lease))
+                
+            # Sửa Lỗ hổng 3: Đo lường thời gian chiếm giữ khóa thực tế (Actual lock hold time)
+            # Truy vấn trực tiếp từ các Site tham gia xem thời gian giữ khóa thực tế lớn nhất là bao nhiêu
+            actual_hold_times = []
+            for node in nodes.values():
+                if tx_id in node.lock_hold_durations:
+                    actual_hold_times.append(node.lock_hold_durations[tx_id])
+            
+            # Nếu không có site nào lấy khóa (do Vote Abort ngay từ đầu do lỗi DB), thời gian block là 0
+            if actual_hold_times:
+                blocking_times.append(max(actual_hold_times))
+            else:
+                blocking_times.append(0.0)
                 
         success_rate = (commits / num_tests) * 100
         avg_blocking = sum(blocking_times) / len(blocking_times)
